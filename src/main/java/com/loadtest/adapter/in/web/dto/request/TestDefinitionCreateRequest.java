@@ -1,4 +1,4 @@
-package com.loadtest.adapter.in.web.dto;
+package com.loadtest.adapter.in.web.dto.request;
 
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;

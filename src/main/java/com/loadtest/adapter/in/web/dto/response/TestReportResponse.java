@@ -1,4 +1,4 @@
-package com.loadtest.adapter.in.web.dto;
+package com.loadtest.adapter.in.web.dto.response;
 
 import java.util.Map;
 
