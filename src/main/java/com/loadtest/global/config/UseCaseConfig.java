@@ -2,8 +2,7 @@ package com.loadtest.global.config;
 
 import com.loadtest.application.port.in.RunUseCase;
 import com.loadtest.application.port.in.TestUseCase;
-import com.loadtest.application.port.out.TestDefinitionRepository;
-import com.loadtest.application.port.out.TestRunRepository;
+import com.loadtest.application.port.out.*;
 import com.loadtest.application.service.RunService;
 import com.loadtest.application.service.TestService;
 import org.springframework.context.annotation.Bean;
@@ -19,7 +18,11 @@ public class UseCaseConfig {
 
     @Bean
     public RunUseCase runUseCase(TestDefinitionRepository testDefinitionRepository,
-                                 TestRunRepository testRunRepository) {
-        return new RunService(testDefinitionRepository, testRunRepository);
+                                 TestRunRepository testRunRepository,
+                                 RunRuntimeStore runtimeStore,
+                                 LoadTestRunner loadTestRunner,
+                                 TestReportRepository reportRepository) {
+        return new RunService(testDefinitionRepository, testRunRepository, runtimeStore, loadTestRunner, reportRepository);
     }
+
 }
