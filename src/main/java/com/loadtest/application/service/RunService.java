@@ -1,52 +1,95 @@
 package com.loadtest.application.service;
 
 import com.loadtest.application.port.in.RunUseCase;
-import com.loadtest.application.port.out.TestDefinitionRepository;
-import com.loadtest.application.port.out.TestRunRepository;
-import com.loadtest.domain.model.MetricsAggregator;
-import com.loadtest.domain.model.TestDefinition;
-import com.loadtest.domain.model.TestReport;
-import com.loadtest.domain.model.TestRun;
+import com.loadtest.application.port.out.*;
+import com.loadtest.domain.model.*;
 
 import java.time.Instant;
-import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
 
 public class RunService implements RunUseCase {
 
     private final TestDefinitionRepository testDefinitionRepository;
     private final TestRunRepository testRunRepository;
-
-    private final Map<UUID, MetricsAggregator> aggregators = new ConcurrentHashMap<>();
+    private final RunRuntimeStore runtimeStore;
+    private final LoadTestRunner loadTestRunner;
+    private final TestReportRepository reportRepository;
 
     public RunService(TestDefinitionRepository testDefinitionRepository,
-                      TestRunRepository testRunRepository) {
+                      TestRunRepository testRunRepository,
+                      RunRuntimeStore runtimeStore,
+                      LoadTestRunner loadTestRunner,
+                      TestReportRepository reportRepository) {
         this.testDefinitionRepository = testDefinitionRepository;
         this.testRunRepository = testRunRepository;
+        this.runtimeStore = runtimeStore;
+        this.loadTestRunner = loadTestRunner;
+        this.reportRepository = reportRepository;
     }
 
     @Override
     public UUID start(UUID testId) {
-        Optional<TestDefinition> testOpt = testDefinitionRepository.findById(testId);
-        if (testOpt.isEmpty()) {
-            throw new IllegalArgumentException("TestDefinition not found: " + testId);
-        }
+        TestDefinition def = testDefinitionRepository.findById(testId)
+                .orElseThrow(() -> new IllegalArgumentException("TestDefinition not found: " + testId));
 
         UUID runId = UUID.randomUUID();
-        TestRun run = new TestRun(
-                runId,
-                testId,
-                TestRun.Status.RUNNING,
-                Instant.now(),
-                null
-        );
 
+        TestRun run = new TestRun(runId, testId, TestRun.Status.RUNNING, Instant.now(), null);
         testRunRepository.save(run);
-        aggregators.put(runId, new MetricsAggregator());
+
+        MetricsAggregator agg = new MetricsAggregator();
+        Instant deadline = Instant.now().plusSeconds(Math.max(1, def.durationSec()));
+
+        int threads = Math.max(1, def.vus());
+        var executor = Executors.newFixedThreadPool(threads);
+
+        RunRuntime runtime = new RunRuntime(runId, testId, deadline, agg, executor);
+        runtimeStore.put(runtime);
+
+        loadTestRunner.start(def, runtime, () -> finishRunDone(runId));
 
         return runId;
+    }
+
+    private void finishRunDone(UUID runId) {
+        Optional<TestRun> opt = testRunRepository.findById(runId);
+        if (opt.isEmpty()) {
+            cleanupRuntime(runId);
+            return;
+        }
+
+        TestRun cur = opt.get();
+        if (cur.status() != TestRun.Status.RUNNING) {
+            // 이미 STOPPED 등으로 바뀐 케이스
+            persistFinalReportIfPresent(runId);
+            cleanupRuntime(runId);
+            return;
+        }
+
+        // 최종 리포트 저장
+        persistFinalReportIfPresent(runId);
+
+        TestRun done = new TestRun(cur.runId(), cur.testId(), TestRun.Status.DONE, cur.startedAt(), Instant.now());
+        testRunRepository.update(done);
+
+        cleanupRuntime(runId);
+    }
+
+    private void persistFinalReportIfPresent(UUID runId) {
+        runtimeStore.get(runId).ifPresent(rt -> {
+            TestReport finalReport = rt.aggregator().snapshot();
+            reportRepository.save(runId, finalReport);
+        });
+    }
+
+    private void cleanupRuntime(UUID runId) {
+        runtimeStore.get(runId).ifPresent(rt -> {
+            rt.stopNow();
+            rt.executor().shutdownNow();
+        });
+        runtimeStore.remove(runId);
     }
 
     @Override
@@ -60,27 +103,27 @@ public class RunService implements RunUseCase {
         TestRun run = testRunRepository.findById(runId)
                 .orElseThrow(() -> new IllegalArgumentException("TestRun not found: " + runId));
 
-        if (run.status() != TestRun.Status.RUNNING) {
-            return; // idempotent stop
-        }
+        if (run.status() != TestRun.Status.RUNNING) return; // idempotent
 
-        TestRun stopped = new TestRun(
-                run.runId(),
-                run.testId(),
-                TestRun.Status.STOPPED,
-                run.startedAt(),
-                Instant.now()
-        );
+        // stop전 최종 리포트 저장 + 중단
+        runtimeStore.get(runId).ifPresent(rt -> {
+            reportRepository.save(runId, rt.aggregator().snapshot());
+            rt.stopNow();
+            rt.executor().shutdownNow();
+        });
 
+        TestRun stopped = new TestRun(run.runId(), run.testId(), TestRun.Status.STOPPED, run.startedAt(), Instant.now());
         testRunRepository.update(stopped);
+
+        runtimeStore.remove(runId);
     }
 
     @Override
     public TestReport getReport(UUID runId) {
-        MetricsAggregator agg = aggregators.get(runId);
-        if (agg == null) {
-            return TestReport.empty();
-        }
-        return agg.snapshot();
+        // 실행 중이면 실시간
+        return runtimeStore.get(runId)
+                .map(rt -> rt.aggregator().snapshot())
+                // 끝났으면 최종 리포트
+                .orElseGet(() -> reportRepository.findByRunId(runId).orElse(TestReport.empty()));
     }
 }
