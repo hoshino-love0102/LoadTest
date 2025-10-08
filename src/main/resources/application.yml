@@ -2,23 +2,6 @@ spring:
   config:
     import: optional:file:./.env[.properties]
 
-  datasource:
-    url: ${DB_URL:?DB_URL missing}
-    username: ${DB_USERNAME:?DB_USERNAME missing}
-    password: ${DB_PASSWORD:?DB_PASSWORD missing}
-
-  jpa:
-    hibernate:
-      ddl-auto: update
-    show-sql: true
-    properties:
-      hibernate:
-        format_sql: true
-  data:
-    redis:
-      host: localhost
-      port: 6379
-
 springdoc:
   api-docs:
     path: /api-docs
