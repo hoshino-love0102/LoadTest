@@ -17,12 +17,21 @@ public class UseCaseConfig {
     }
 
     @Bean
-    public RunUseCase runUseCase(TestDefinitionRepository testDefinitionRepository,
-                                 TestRunRepository testRunRepository,
-                                 RunRuntimeStore runtimeStore,
-                                 LoadTestRunner loadTestRunner,
-                                 TestReportRepository reportRepository) {
-        return new RunService(testDefinitionRepository, testRunRepository, runtimeStore, loadTestRunner, reportRepository);
+    public RunUseCase runUseCase(
+            TestDefinitionRepository testDefinitionRepository,
+            TestRunRepository testRunRepository,
+            RunRuntimeStore runtimeStore,
+            LoadTestRunner loadTestRunner,
+            TestReportRepository reportRepository,
+            RunSampleRepository sampleRepository
+    ) {
+        return new RunService(
+                testDefinitionRepository,
+                testRunRepository,
+                runtimeStore,
+                loadTestRunner,
+                reportRepository,
+                sampleRepository
+        );
     }
-
 }
